@@ -82,7 +82,7 @@ async function authenticate(){
       cmRefreshToken=session.refreshToken;
       fs.writeFileSync(refreshTokenPath,cmRefreshToken);
       console.log('Modern Steam authentication completed; refresh token saved');
-      authenticate().catch(e=>console.error('Authentication bootstrap failed',e.message));
+      steamClient.connect();
     }catch(e){console.error('Steam token save failed',e.message)}
   });
   session.on('timeout',()=>console.error('Modern Steam authentication timed out'));
@@ -212,4 +212,4 @@ function shutdown(){
 process.on('SIGINT',shutdown);
 process.on('SIGTERM',shutdown);
 
-steamClient.connect();
+authenticate().catch(e=>console.error('Authentication bootstrap failed',e.message));

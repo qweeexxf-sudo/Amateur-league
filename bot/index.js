@@ -7,6 +7,7 @@ const dota2=require('dota2');
 const fs=require('fs');
 const path=require('path');
 const crypto=require('crypto');
+const {LoginSession,EAuthTokenPlatformType}=require('steam-session');
 
 const steamClient=new Steam.SteamClient();
 const steamUser=new Steam.SteamUser(steamClient);
@@ -18,6 +19,8 @@ const workerId=process.env.BOT_WORKER_ID||'riftline-1';
 const dataDir=process.env.BOT_DATA_DIR||path.join(__dirname,'../data');
 const sentryPath=path.join(dataDir,'steam-sentry.bin');
 const serversPath=path.join(dataDir,'steam-servers.json');
+const refreshTokenPath=path.join(dataDir,'steam-refresh-token.txt');
+const machineTokenPath=path.join(dataDir,'steam-machine-token.txt');
 fs.mkdirSync(dataDir,{recursive:true});
 try{
   const saved=JSON.parse(fs.readFileSync(serversPath,'utf8'));
@@ -55,17 +58,50 @@ function scheduleReconnect(){
     try{steamClient.connect()}catch(e){console.error('Reconnect failed',e.message);scheduleReconnect()}
   },5000);
 }
+let cmRefreshToken=null;
 function logon(){
+  const account=process.env.STEAM_USERNAME;
+  if(!account||!cmRefreshToken){console.error('Steam account / refresh token missing');return}
+  // Steam's modern client flow sends the refresh token in CMsgClientLogon.access_token.
+  steamUser.logOn({account_name:account,access_token:cmRefreshToken,should_remember_password:true});
+}
+async function authenticate(){
   const account=process.env.STEAM_USERNAME,password=process.env.STEAM_PASSWORD;
   if(!account||!password){console.error('STEAM_USERNAME / STEAM_PASSWORD missing');return}
-  const details={account_name:account,password};
-  if(process.env.STEAM_GUARD_CODE) details.auth_code=process.env.STEAM_GUARD_CODE;
-  if(process.env.STEAM_2FA_CODE) details.two_factor_code=process.env.STEAM_2FA_CODE;
   try{
-    const sentry=fs.readFileSync(sentryPath);
-    if(sentry.length) details.sha_sentryfile=sentry;
+    const saved=fs.readFileSync(refreshTokenPath,'utf8').trim();
+    if(saved){cmRefreshToken=saved;console.log('Using saved Steam refresh token');steamClient.connect();return}
   }catch{}
-  steamUser.logOn(details);
+  const session=new LoginSession(EAuthTokenPlatformType.SteamClient);
+  session.loginTimeout=180000;
+  session.on('steamGuardMachineToken',token=>{
+    try{fs.writeFileSync(machineTokenPath,String(token))}catch(e){console.error('Machine token save failed',e.message)}
+  });
+  session.on('authenticated',()=>{
+    try{
+      cmRefreshToken=session.refreshToken;
+      fs.writeFileSync(refreshTokenPath,cmRefreshToken);
+      console.log('Modern Steam authentication completed; refresh token saved');
+      authenticate().catch(e=>console.error('Authentication bootstrap failed',e.message));
+    }catch(e){console.error('Steam token save failed',e.message)}
+  });
+  session.on('timeout',()=>console.error('Modern Steam authentication timed out'));
+  session.on('error',e=>console.error('Modern Steam authentication error',e.message,e.eresult||''));
+  let machineToken;
+  try{machineToken=fs.readFileSync(machineTokenPath,'utf8').trim()||undefined}catch{}
+  try{
+    const result=await session.startWithCredentials({accountName:account,password,steamGuardMachineToken:machineToken});
+    if(result.actionRequired){
+      console.log('Steam Guard action required:',result.validActions.map(x=>x.type).join(','));
+      const code=process.env.STEAM_GUARD_CODE||process.env.STEAM_2FA_CODE;
+      if(code){
+        await session.submitSteamGuardCode(code);
+        console.log('Steam Guard code submitted');
+      }else{
+        console.log('Approve the Steam login in the mobile app, or set the requested one-time Guard code in Railway');
+      }
+    }
+  }catch(e){console.error('Modern Steam authentication start failed',e.message,e.eresult||'')}
 }
 
 steamClient.on('connected',logon);

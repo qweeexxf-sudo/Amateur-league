@@ -1,21 +1,26 @@
 # Riftline Tournament Platform
 
-Prototype for an independent amateur Dota 2 tournament website and lobby automation service.
+Production prototype for **RIFTLINE OPEN 2026**, an independent amateur Dota 2 tournament.
 
-## Included
-- Public tournament website with About, format, schedule, rules and contact sections.
-- Admin API for creating queued match records.
-- Lobby-bot prototype that consumes queued matches and requests Captains Mode practice lobbies from the Dota 2 Game Coordinator.
-- Optional `LEAGUE_ID` support. A league ID must come from Valve's legitimate league process; this project does not bypass approval.
+## Current deployment
 
-## Before publishing
-1. Replace the placeholder contact email in `public/index.html` with a real monitored tournament address.
-2. Confirm the tournament dates, format and region are accurate.
-3. Publish the public site at a stable HTTPS URL.
-4. Use the official Dota 2 amateur-league process if you need an approved League ID.
-5. Only after approval, set `LEAGUE_ID` in the deployment environment and use an organizer account with the required permissions.
+- Public site and admin UI are served from GitHub Pages.
+- Railway runs the Express API and one Dota 2 lobby worker.
+- The worker authenticates with modern `steam-user`; its refresh token is stored on the persistent Railway volume.
+- The Dota 2 Game Coordinator connection has been live-tested successfully.
+- A real Captains Mode practice lobby was created through Valve GC and destroyed successfully in the one-time smoke test.
+- Server region `3` is Europe.
+- BO1 / BO3 / BO5 map to Dota series types NONE / BEST_OF_THREE / BEST_OF_FIVE.
+- `LEAGUE_ID=0` remains correct until a legitimate Valve league ID is approved.
+
+## Match flow
+
+The admin UI queues a match through the authenticated API. The worker creates the practice lobby, records the lobby ID, invites the supplied SteamID64 players, and waits for admin actions to launch, destroy, or cancel the lobby.
+
+One worker/account can own one active lobby at a time. Running simultaneous tournament matches requires additional worker accounts/services; do not assume this single worker can host concurrent lobbies.
 
 ## Local setup
+
 ```bash
 cp .env.example .env
 npm install
@@ -25,11 +30,11 @@ npm run bot
 ```
 
 ## Security
-Never commit a real Steam password, Steam Guard code or admin token. Keep them in deployment secrets/environment variables. Use a dedicated organizer account rather than a valuable personal Steam account.
 
-## Reliability
-The Steam/Dota Game Coordinator integration relies on community-maintained libraries. It has not yet been live-tested in this repository. Keep manual lobby creation available as a fallback until end-to-end testing is complete.
+Never commit a Steam password, Steam Guard code, refresh token, or admin token. Keep secrets in Railway/environment variables or the persistent private volume. The public admin page stores the admin token only in browser session storage.
 
-## Steam bot runtime
+## Operational notes
 
-The Railway worker uses modern `steam-user` authentication with a refresh token stored on the persistent volume, and `node-dota2-fork` for Dota 2 Game Coordinator/lobby operations. Steam Guard codes are only used for initial authorization when Steam requests them.
+The admin UI includes a protected live bot status showing Steam connectivity, Dota GC readiness, and heartbeat freshness. Steam Guard email codes are only needed when Steam explicitly requests re-authorization.
+
+Keep manual lobby creation available as an event-day fallback because Steam and the Dota Game Coordinator are external dependencies.

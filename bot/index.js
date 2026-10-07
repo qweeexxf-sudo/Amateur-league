@@ -21,6 +21,7 @@ const serversPath=path.join(dataDir,'steam-servers.json');
 const refreshTokenPath=path.join(dataDir,'steam-refresh-token.txt');
 const machineTokenPath=path.join(dataDir,'steam-machine-token.txt');
 const guardCodePath=path.join(dataDir,'steam-guard-code.json');
+const smokeMarkerPath=path.join(dataDir,'gc-lobby-smoke-ok.txt');
 fs.mkdirSync(dataDir,{recursive:true});
 
 let creating=false;
@@ -122,8 +123,55 @@ steamUser.on('loggedOn',()=>{
 steamUser.on('error',e=>console.error('Steam user error',e?.message||e,e?.eresult||''));
 steamUser.on('disconnected',eresult=>console.error('Steam disconnected',eresult||''));
 
-Dota2.on('ready',()=>{
+async function runLobbySmokeTest(){
+  if(fs.existsSync(smokeMarkerPath)){
+    console.log('Lobby smoke test already passed');
+    return true;
+  }
+  console.log('Starting one-time practice lobby smoke test');
+  return new Promise(resolve=>{
+    let done=false;
+    const finish=ok=>{if(done)return;done=true;clearTimeout(timer);resolve(ok)};
+    const timer=setTimeout(()=>{
+      console.error('Lobby smoke test timed out');
+      try{if(Dota2.Lobby)Dota2.destroyLobby(()=>{})}catch{}
+      finish(false);
+    },25000);
+    Dota2.once('practiceLobbyUpdate',lobby=>{
+      const lobbyId=lobby?.lobby_id!=null?String(lobby.lobby_id):'(pending id)';
+      console.log('Lobby smoke test created',lobbyId);
+      setTimeout(()=>{
+        Dota2.destroyLobby(err=>{
+          if(err){console.error('Lobby smoke test destroy failed',String(err));return finish(false)}
+          try{fs.writeFileSync(smokeMarkerPath,new Date().toISOString())}catch(e){console.error('Smoke marker save failed',e.message)}
+          console.log('Lobby smoke test passed and lobby destroyed');
+          finish(true);
+        });
+      },1000);
+    });
+    Dota2.createPracticeLobby({
+      game_name:'RIFTLINE BOT SMOKE TEST',
+      pass_key:crypto.randomBytes(8).toString('hex'),
+      server_region:Number(process.env.SERVER_REGION||3),
+      game_mode:dota2.schema.DOTA_GameMode.DOTA_GAMEMODE_CM,
+      allow_cheats:false,
+      fill_with_bots:false,
+      allow_spectating:false,
+      series_type:0,
+      leagueid:0
+    },err=>{
+      if(err){
+        console.error('Lobby smoke test create failed',String(err));
+        finish(false);
+      }else{
+        console.log('Lobby smoke test create request accepted by GC');
+      }
+    });
+  });
+}
+Dota2.on('ready',async ()=>{
   console.log('Dota GC ready');
+  await runLobbySmokeTest();
   if(!pumpTimer)pumpTimer=setInterval(()=>pump().catch(e=>console.error('Pump failed',e.message)),1200);
 });
 Dota2.on('hellotimeout',()=>console.error('Dota GC hello timeout'));
@@ -157,7 +205,7 @@ async function create(match){
     server_region:Number(process.env.SERVER_REGION||3),
     game_mode:dota2.schema.DOTA_GameMode.DOTA_GAMEMODE_CM,
     allow_cheats:false,fill_with_bots:false,allow_spectating:true,
-    series_type:match.bestOf===5?2:1,
+    series_type:match.bestOf===5?2:match.bestOf===3?1:0,
     leagueid:Number(process.env.LEAGUE_ID||0)||undefined
   };
   Dota2.createPracticeLobby(options,async err=>{

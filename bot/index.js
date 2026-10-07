@@ -6,7 +6,6 @@ const SteamUser=require('steam-user');
 const dota2=require('dota2');
 const fs=require('fs');
 const path=require('path');
-const crypto=require('crypto');
 const {LoginSession,EAuthTokenPlatformType}=require('steam-session');
 
 const steamUser=new SteamUser({autoRelogin:true});
@@ -16,8 +15,6 @@ const api=(process.env.BOT_API_URL||`http://127.0.0.1:${process.env.PORT||3000}`
 const token=process.env.ADMIN_TOKEN;
 const workerId=process.env.BOT_WORKER_ID||'riftline-1';
 const dataDir=process.env.BOT_DATA_DIR||path.join(__dirname,'../data');
-const sentryPath=path.join(dataDir,'steam-sentry.bin');
-const serversPath=path.join(dataDir,'steam-servers.json');
 const refreshTokenPath=path.join(dataDir,'steam-refresh-token.txt');
 const machineTokenPath=path.join(dataDir,'steam-machine-token.txt');
 const guardCodePath=path.join(dataDir,'steam-guard-code.json');
@@ -142,7 +139,20 @@ Dota2.on('ready',()=>{
 Dota2.on('hellotimeout',()=>console.error('Dota GC hello timeout'));
 
 Dota2.on('practiceLobbyUpdate',async lobby=>{
-  const id=activeMatchId;
+  let id=activeMatchId;
+  if(!id){
+    try{
+      const all=await rows();
+      const recoverable=new Set(['creating_lobby','lobby_created','launching','destroying']);
+      const recovered=all.find(x=>x.workerId===workerId&&recoverable.has(x.status));
+      if(recovered){
+        id=recovered.id;
+        activeMatchId=id;
+        creating=false;
+        console.log('Recovered active lobby job',id);
+      }
+    }catch(e){console.error('Lobby recovery failed',e.message)}
+  }
   if(!id)return;
   const lobbyId=lobby?.lobby_id!=null?String(lobby.lobby_id):null;
   const current=await patch(id,{status:'lobby_created',lobbyId,error:null,workerId});
@@ -207,6 +217,12 @@ async function pump(){
       activeMatchId=null;creating=false;return;
     }
     if(creating||Dota2.Lobby||activeMatchId)return;
+    const interrupted=all.find(x=>x.workerId===workerId&&x.status==='creating_lobby');
+    if(interrupted){
+      console.log('Retrying interrupted lobby creation',interrupted.id);
+      await create(interrupted);
+      return;
+    }
     const next=all.find(x=>x.status==='queued');
     if(next)await create(next);
   }finally{pumping=false}

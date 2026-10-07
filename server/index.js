@@ -10,7 +10,10 @@ app.use((req,res,next)=>{const origin=req.headers.origin;if(origin===allowedOrig
 app.use(express.json({limit:'32kb'}));
 app.use(express.static(path.join(__dirname,'../public')));
 
-const db=path.join(__dirname,'../data/matches.json');
+const dataDir=path.join(__dirname,'../data');
+const db=path.join(dataDir,'matches.json');
+const steamGuardPath=path.join(dataDir,'steam-guard-code.json');
+fs.mkdirSync(dataDir,{recursive:true});
 function read(){try{return JSON.parse(fs.readFileSync(db,'utf8'))}catch{return []}}
 function write(rows){const tmp=db+'.tmp';fs.writeFileSync(tmp,JSON.stringify(rows,null,2));fs.renameSync(tmp,db)}
 function auth(req,res,next){
@@ -23,6 +26,15 @@ function cleanPlayers(v){return Array.isArray(v)?v.map(String).map(x=>x.trim()).
 
 app.get('/api/health',(req,res)=>res.json({ok:true,leagueId:Number(process.env.LEAGUE_ID||0),time:new Date().toISOString()}));
 app.get('/api/matches',auth,(req,res)=>res.json(read()));
+
+app.post('/api/steam/guard',auth,(req,res)=>{
+  const code=String(req.body.code||'').trim();
+  if(!/^[A-Za-z0-9]{4,10}$/.test(code)) return res.status(400).json({error:'invalid Steam Guard code format'});
+  const tmp=steamGuardPath+'.tmp';
+  fs.writeFileSync(tmp,JSON.stringify({code,createdAt:new Date().toISOString()}));
+  fs.renameSync(tmp,steamGuardPath);
+  res.json({ok:true});
+});
 
 app.post('/api/matches',auth,(req,res)=>{
   const rows=read();

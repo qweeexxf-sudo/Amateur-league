@@ -13,6 +13,7 @@ app.use(express.static(path.join(__dirname,'../public')));
 const dataDir=path.join(__dirname,'../data');
 const db=path.join(dataDir,'matches.json');
 const steamGuardPath=path.join(dataDir,'steam-guard-code.json');
+const botStatusPath=path.join(dataDir,'bot-status.json');
 fs.mkdirSync(dataDir,{recursive:true});
 function read(){try{return JSON.parse(fs.readFileSync(db,'utf8'))}catch{return []}}
 function write(rows){const tmp=db+'.tmp';fs.writeFileSync(tmp,JSON.stringify(rows,null,2));fs.renameSync(tmp,db)}
@@ -26,6 +27,13 @@ function cleanPlayers(v){return Array.isArray(v)?v.map(String).map(x=>x.trim()).
 
 app.get('/api/health',(req,res)=>res.json({ok:true,leagueId:Number(process.env.LEAGUE_ID||0),time:new Date().toISOString()}));
 app.get('/api/matches',auth,(req,res)=>res.json(read()));
+app.get('/api/bot/status',auth,(req,res)=>{
+  try{
+    const status=JSON.parse(fs.readFileSync(botStatusPath,'utf8'));
+    const ageMs=Date.now()-Date.parse(status.updatedAt||0);
+    res.json({...status,online:Number.isFinite(ageMs)&&ageMs<20000,ageMs});
+  }catch{res.json({online:false,steamOnline:false,gcReady:false,phase:'offline'})}
+});
 
 app.post('/api/steam/guard',auth,(req,res)=>{
   const code=String(req.body.code||'').trim();
@@ -40,7 +48,8 @@ app.post('/api/matches',auth,(req,res)=>{
   const rows=read();
   const id=crypto.randomUUID();
   const radiant=cleanPlayers(req.body.radiant),dire=cleanPlayers(req.body.dire);
-  const bestOf=Number(req.body.bestOf)===5?5:3;
+  const requestedBestOf=Number(req.body.bestOf);
+  const bestOf=[1,3,5].includes(requestedBestOf)?requestedBestOf:3;
   const row={
     id,status:'queued',action:null,
     name:String(req.body.name||`Riftline ${id.slice(0,6)}`).slice(0,80),

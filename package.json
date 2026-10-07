@@ -1,0 +1,7 @@
+{
+  "name":"riftline-tournament-platform",
+  "version":"0.1.0",
+  "private":true,
+  "scripts":{"start":"node server/index.js","bot":"node bot/index.js"},
+  "dependencies":{"dotenv":"^16.4.5","express":"^4.21.0","ws":"^8.18.0","dota2":"github:dotabod/node-dota2-fork","steam":"github:dotabod/node-steam-fork"}
+}

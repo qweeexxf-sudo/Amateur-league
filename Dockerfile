@@ -6,4 +6,4 @@ RUN npm install --omit=dev
 COPY . .
 ENV NODE_ENV=production
 EXPOSE 3000
-CMD ["sh","-c","node server/index.js & node bot/index.js"]
+CMD ["sh","-c","node server/index.js & API_PID=$!; if [ -n \"$STEAM_USERNAME\" ] && [ -n \"$STEAM_PASSWORD\" ]; then exec node bot/index.js; else echo 'Steam credentials not configured; API-only mode'; wait $API_PID; fi"]

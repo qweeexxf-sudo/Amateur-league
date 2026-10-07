@@ -29,3 +29,7 @@ Never commit a real Steam password, Steam Guard code or admin token. Keep them i
 
 ## Reliability
 The Steam/Dota Game Coordinator integration relies on community-maintained libraries. It has not yet been live-tested in this repository. Keep manual lobby creation available as a fallback until end-to-end testing is complete.
+
+## Steam bot runtime
+
+The Railway worker uses modern `steam-user` authentication with a refresh token stored on the persistent volume, and `node-dota2-fork` for Dota 2 Game Coordinator/lobby operations. Steam Guard codes are only used for initial authorization when Steam requests them.

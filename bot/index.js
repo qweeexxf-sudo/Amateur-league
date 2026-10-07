@@ -21,12 +21,22 @@ const serversPath=path.join(dataDir,'steam-servers.json');
 const refreshTokenPath=path.join(dataDir,'steam-refresh-token.txt');
 const machineTokenPath=path.join(dataDir,'steam-machine-token.txt');
 const guardCodePath=path.join(dataDir,'steam-guard-code.json');
+const botStatusPath=path.join(dataDir,'bot-status.json');
 fs.mkdirSync(dataDir,{recursive:true});
 
 let creating=false;
 let activeMatchId=null;
 let pumpTimer=null;
 let pumping=false;
+let gcReady=false;
+let heartbeatTimer=null;
+function writeBotStatus(extra={}){
+  try{
+    const tmp=botStatusPath+'.tmp';
+    fs.writeFileSync(tmp,JSON.stringify({workerId,steamOnline:!!steamUser.steamID,gcReady,activeMatchId,updatedAt:new Date().toISOString(),...extra}));
+    fs.renameSync(tmp,botStatusPath);
+  }catch(e){console.error('Bot status write failed',e.message)}
+}
 
 async function request(path,options={}){
   if(!token) throw new Error('ADMIN_TOKEN missing');
@@ -116,13 +126,16 @@ async function authenticate(){
 }
 
 steamUser.on('loggedOn',()=>{
+  writeBotStatus({phase:'steam_online'});
   console.log('Steam logged in; launching Dota GC');
   Dota2.launch();
 });
 steamUser.on('error',e=>console.error('Steam user error',e?.message||e,e?.eresult||''));
-steamUser.on('disconnected',eresult=>console.error('Steam disconnected',eresult||''));
+steamUser.on('disconnected',eresult=>{gcReady=false;writeBotStatus({phase:'steam_disconnected'});console.error('Steam disconnected',eresult||'')});
 
 Dota2.on('ready',()=>{
+  gcReady=true;writeBotStatus({phase:'ready'});
+  if(!heartbeatTimer)heartbeatTimer=setInterval(()=>writeBotStatus({phase:gcReady?'ready':'connecting'}),5000);
   console.log('Dota GC ready');
   if(!pumpTimer)pumpTimer=setInterval(()=>pump().catch(e=>console.error('Pump failed',e.message)),1200);
 });
@@ -201,6 +214,8 @@ async function pump(){
 
 function shutdown(){
   if(pumpTimer)clearInterval(pumpTimer);
+  if(heartbeatTimer)clearInterval(heartbeatTimer);
+  gcReady=false;writeBotStatus({phase:'stopping'});
   try{Dota2.exit()}catch{}
   try{steamUser.logOff()}catch{}
   process.exit(0);

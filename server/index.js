@@ -14,9 +14,25 @@ const dataDir=path.join(__dirname,'../data');
 const db=path.join(dataDir,'matches.json');
 const steamGuardPath=path.join(dataDir,'steam-guard-code.json');
 const botStatusPath=path.join(dataDir,'bot-status.json');
+const settingsPath=path.join(dataDir,'settings.json');
 fs.mkdirSync(dataDir,{recursive:true});
 function read(){try{return JSON.parse(fs.readFileSync(db,'utf8'))}catch{return []}}
 function write(rows){const tmp=db+'.tmp';fs.writeFileSync(tmp,JSON.stringify(rows,null,2));fs.renameSync(tmp,db)}
+function readSettings(){
+  try{
+    const x=JSON.parse(fs.readFileSync(settingsPath,'utf8'));
+    const leagueId=Number(x.leagueId);
+    return {leagueId:Number.isSafeInteger(leagueId)&&leagueId>=0?leagueId:0,updatedAt:x.updatedAt||null};
+  }catch{
+    const leagueId=Number(process.env.LEAGUE_ID||0);
+    return {leagueId:Number.isSafeInteger(leagueId)&&leagueId>=0?leagueId:0,updatedAt:null};
+  }
+}
+function writeSettings(settings){
+  const tmp=settingsPath+'.tmp';
+  fs.writeFileSync(tmp,JSON.stringify(settings,null,2));
+  fs.renameSync(tmp,settingsPath);
+}
 function auth(req,res,next){
   const token=process.env.ADMIN_TOKEN;
   if(!token) return res.status(503).json({error:'ADMIN_TOKEN is not configured'});
@@ -25,8 +41,18 @@ function auth(req,res,next){
 }
 function cleanPlayers(v){return Array.isArray(v)?v.map(String).map(x=>x.trim()).filter(Boolean).slice(0,5):[]}
 
-app.get('/api/health',(req,res)=>res.json({ok:true,leagueId:Number(process.env.LEAGUE_ID||0),time:new Date().toISOString()}));
+app.get('/api/health',(req,res)=>res.json({ok:true,leagueId:readSettings().leagueId,time:new Date().toISOString()}));
 app.get('/api/matches',auth,(req,res)=>res.json(read()));
+app.get('/api/settings',auth,(req,res)=>res.json(readSettings()));
+app.post('/api/settings/league',auth,(req,res)=>{
+  const raw=String(req.body.leagueId??'').trim();
+  if(!/^\d{1,10}$/.test(raw)) return res.status(400).json({error:'League ID must be 0 or a positive numeric Valve League ID'});
+  const leagueId=Number(raw);
+  if(!Number.isSafeInteger(leagueId)||leagueId<0) return res.status(400).json({error:'invalid League ID'});
+  const settings={...readSettings(),leagueId,updatedAt:new Date().toISOString()};
+  writeSettings(settings);
+  res.json(settings);
+});
 app.get('/api/bot/status',auth,(req,res)=>{
   try{
     const status=JSON.parse(fs.readFileSync(botStatusPath,'utf8'));
@@ -54,7 +80,7 @@ app.post('/api/matches',auth,(req,res)=>{
     id,status:'queued',action:null,
     name:String(req.body.name||`Riftline ${id.slice(0,6)}`).slice(0,80),
     password:crypto.randomBytes(4).toString('hex').toUpperCase(),
-    radiant,dire,bestOf,
+    radiant,dire,bestOf,leagueId:readSettings().leagueId,
     createdAt:new Date().toISOString()
   };
   rows.push(row);write(rows);res.status(201).json(row);

@@ -181,7 +181,7 @@ async function create(match){
     game_mode:dota2.schema.DOTA_GameMode.DOTA_GAMEMODE_CM,
     allow_cheats:false,fill_with_bots:false,allow_spectating:true,
     series_type:match.bestOf===5?2:match.bestOf===3?1:0,
-    leagueid:Number(process.env.LEAGUE_ID||0)||undefined
+    leagueid:Number(match.leagueId||0)||undefined
   };
   Dota2.createPracticeLobby(options,async err=>{
     if(err){

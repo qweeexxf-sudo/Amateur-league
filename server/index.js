@@ -5,6 +5,8 @@ const path=require('path');
 const crypto=require('crypto');
 
 const app=express();
+const allowedOrigin=process.env.ADMIN_ORIGIN||'https://qweeexxf-sudo.github.io';
+app.use((req,res,next)=>{const origin=req.headers.origin;if(origin===allowedOrigin){res.setHeader('Access-Control-Allow-Origin',origin);res.setHeader('Vary','Origin');res.setHeader('Access-Control-Allow-Headers','Authorization, Content-Type');res.setHeader('Access-Control-Allow-Methods','GET, POST, OPTIONS')}if(req.method==='OPTIONS')return res.sendStatus(204);next()});
 app.use(express.json({limit:'32kb'}));
 app.use(express.static(path.join(__dirname,'../public')));
 

@@ -17,6 +17,7 @@
     "winston": "^3.2.1",
     "ws": "^8.18.0",
     "dota2": "github:dotabod/node-dota2-fork",
-    "steam": "github:dotabod/node-steam-fork"
+    "steam": "github:dotabod/node-steam-fork",
+    "steam-session": "^1.9.4"
   }
 }

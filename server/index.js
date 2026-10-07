@@ -51,7 +51,7 @@ app.post('/api/matches/:id/action',auth,(req,res)=>{
 app.post('/api/matches/:id/status',auth,(req,res)=>{
   const rows=read(),m=rows.find(x=>x.id===req.params.id);
   if(!m) return res.sendStatus(404);
-  const allowed=['status','lobbyId','error','matchId','action'];
+  const allowed=['status','lobbyId','error','matchId','action','invitesSent','workerId'];
   for(const k of allowed) if(Object.prototype.hasOwnProperty.call(req.body,k)) m[k]=req.body[k];
   m.updatedAt=new Date().toISOString();write(rows);res.json(m);
 });

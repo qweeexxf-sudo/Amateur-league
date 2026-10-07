@@ -2,16 +2,15 @@
    The API is the sole owner of match storage; this worker talks to it over HTTP.
    Use a dedicated organizer account. LEAGUE_ID requires legitimate Valve approval. */
 require('dotenv').config();
-const Steam=require('steam');
+const SteamUser=require('steam-user');
 const dota2=require('dota2');
 const fs=require('fs');
 const path=require('path');
 const crypto=require('crypto');
 const {LoginSession,EAuthTokenPlatformType}=require('steam-session');
 
-const steamClient=new Steam.SteamClient();
-const steamUser=new Steam.SteamUser(steamClient);
-const Dota2=new dota2.Dota2Client(steamClient,true,false);
+const steamUser=new SteamUser({autoRelogin:true});
+const Dota2=new dota2.Dota2Client(steamUser,true,false);
 
 const api=(process.env.BOT_API_URL||`http://127.0.0.1:${process.env.PORT||3000}`).replace(/\/$/,'');
 const token=process.env.ADMIN_TOKEN;
@@ -23,15 +22,10 @@ const refreshTokenPath=path.join(dataDir,'steam-refresh-token.txt');
 const machineTokenPath=path.join(dataDir,'steam-machine-token.txt');
 const guardCodePath=path.join(dataDir,'steam-guard-code.json');
 fs.mkdirSync(dataDir,{recursive:true});
-try{
-  const saved=JSON.parse(fs.readFileSync(serversPath,'utf8'));
-  if(Array.isArray(saved)&&saved.length) Steam.servers=saved;
-}catch{}
 
 let creating=false;
 let activeMatchId=null;
 let pumpTimer=null;
-let reconnectTimer=null;
 let pumping=false;
 
 async function request(path,options={}){
@@ -52,19 +46,10 @@ async function patch(id,values){
     });
   }catch(e){console.error('Status update failed',e.message);return null}
 }
-function scheduleReconnect(){
-  if(reconnectTimer)return;
-  reconnectTimer=setTimeout(()=>{
-    reconnectTimer=null;
-    try{steamClient.connect()}catch(e){console.error('Reconnect failed',e.message);scheduleReconnect()}
-  },5000);
-}
 let cmRefreshToken=null;
 function logon(){
-  const account=process.env.STEAM_USERNAME;
-  if(!account||!cmRefreshToken){console.error('Steam account / refresh token missing');return}
-  // Steam's modern client flow sends the refresh token in CMsgClientLogon.access_token.
-  steamUser.logOn({account_name:account,access_token:cmRefreshToken,should_remember_password:true});
+  if(!cmRefreshToken){console.error('Steam refresh token missing');return}
+  steamUser.logOn({refreshToken:cmRefreshToken});
 }
 async function waitForGuardCode(session){
   console.log('Waiting for Steam Guard code from Riftline Admin');
@@ -96,7 +81,7 @@ async function authenticate(){
   if(!account||!password){console.error('STEAM_USERNAME / STEAM_PASSWORD missing');return}
   try{
     const saved=fs.readFileSync(refreshTokenPath,'utf8').trim();
-    if(saved){cmRefreshToken=saved;console.log('Using saved Steam refresh token');steamClient.connect();return}
+    if(saved){cmRefreshToken=saved;console.log('Using saved Steam refresh token');logon();return}
   }catch{}
   try{fs.unlinkSync(guardCodePath)}catch{}
   const session=new LoginSession(EAuthTokenPlatformType.SteamClient);
@@ -109,7 +94,7 @@ async function authenticate(){
       cmRefreshToken=session.refreshToken;
       fs.writeFileSync(refreshTokenPath,cmRefreshToken);
       console.log('Modern Steam authentication completed; refresh token saved');
-      steamClient.connect();
+      logon();
     }catch(e){console.error('Steam token save failed',e.message)}
   });
   session.on('timeout',()=>console.error('Modern Steam authentication timed out'));
@@ -130,27 +115,12 @@ async function authenticate(){
   }catch(e){console.error('Modern Steam authentication start failed',e.message,e.eresult||'')}
 }
 
-steamClient.on('connected',logon);
-steamClient.on('error',e=>{console.error('Steam connection error',e?.message||e);scheduleReconnect()});
-steamClient.on('loggedOff',r=>{console.error('Steam logged off',r);scheduleReconnect()});
-steamClient.on('servers',servers=>{
-  try{fs.writeFileSync(serversPath,JSON.stringify(servers))}catch(e){console.error('Server list save failed',e.message)}
+steamUser.on('loggedOn',()=>{
+  console.log('Steam logged in; launching Dota GC');
+  Dota2.launch();
 });
-steamUser.on('updateMachineAuth',(sentry,callback)=>{
-  try{
-    const hash=crypto.createHash('sha1').update(sentry.bytes).digest();
-    fs.writeFileSync(sentryPath,hash);
-    callback({sha_file:hash});
-    console.log('Steam machine authorization saved');
-  }catch(e){
-    console.error('Steam machine authorization save failed',e.message);
-    callback({});
-  }
-});
-steamClient.on('logOnResponse',r=>{
-  if(r.eresult===Steam.EResult.OK){console.log('Steam logged in; launching Dota GC');Dota2.launch()}
-  else {console.error('Steam login failed',r.eresult);scheduleReconnect()}
-});
+steamUser.on('error',e=>console.error('Steam user error',e?.message||e,e?.eresult||''));
+steamUser.on('disconnected',eresult=>console.error('Steam disconnected',eresult||''));
 
 Dota2.on('ready',()=>{
   console.log('Dota GC ready');
@@ -232,7 +202,7 @@ async function pump(){
 function shutdown(){
   if(pumpTimer)clearInterval(pumpTimer);
   try{Dota2.exit()}catch{}
-  try{steamClient.disconnect()}catch{}
+  try{steamUser.logOff()}catch{}
   process.exit(0);
 }
 process.on('SIGINT',shutdown);

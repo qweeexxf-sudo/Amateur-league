@@ -21,6 +21,7 @@ const sentryPath=path.join(dataDir,'steam-sentry.bin');
 const serversPath=path.join(dataDir,'steam-servers.json');
 const refreshTokenPath=path.join(dataDir,'steam-refresh-token.txt');
 const machineTokenPath=path.join(dataDir,'steam-machine-token.txt');
+const guardCodePath=path.join(dataDir,'steam-guard-code.json');
 fs.mkdirSync(dataDir,{recursive:true});
 try{
   const saved=JSON.parse(fs.readFileSync(serversPath,'utf8'));
@@ -65,6 +66,31 @@ function logon(){
   // Steam's modern client flow sends the refresh token in CMsgClientLogon.access_token.
   steamUser.logOn({account_name:account,access_token:cmRefreshToken,should_remember_password:true});
 }
+async function waitForGuardCode(session){
+  console.log('Waiting for Steam Guard code from Riftline Admin');
+  const deadline=Date.now()+9*60*1000;
+  while(Date.now()<deadline){
+    let payload=null;
+    try{
+      payload=JSON.parse(fs.readFileSync(guardCodePath,'utf8'));
+      fs.unlinkSync(guardCodePath);
+    }catch{}
+    const code=String(payload?.code||'').trim();
+    if(code){
+      try{
+        await session.submitSteamGuardCode(code);
+        console.log('Steam Guard code accepted; waiting for authentication');
+        return true;
+      }catch(e){
+        console.error('Steam Guard code rejected',e.message,e.eresult||'');
+        console.log('Waiting for another Steam Guard code in the same login session');
+      }
+    }
+    await new Promise(r=>setTimeout(r,1000));
+  }
+  console.error('Steam Guard code wait timed out');
+  return false;
+}
 async function authenticate(){
   const account=process.env.STEAM_USERNAME,password=process.env.STEAM_PASSWORD;
   if(!account||!password){console.error('STEAM_USERNAME / STEAM_PASSWORD missing');return}
@@ -72,8 +98,9 @@ async function authenticate(){
     const saved=fs.readFileSync(refreshTokenPath,'utf8').trim();
     if(saved){cmRefreshToken=saved;console.log('Using saved Steam refresh token');steamClient.connect();return}
   }catch{}
+  try{fs.unlinkSync(guardCodePath)}catch{}
   const session=new LoginSession(EAuthTokenPlatformType.SteamClient);
-  session.loginTimeout=180000;
+  session.loginTimeout=600000;
   session.on('steamGuardMachineToken',token=>{
     try{fs.writeFileSync(machineTokenPath,String(token))}catch(e){console.error('Machine token save failed',e.message)}
   });
@@ -92,13 +119,12 @@ async function authenticate(){
   try{
     const result=await session.startWithCredentials({accountName:account,password,steamGuardMachineToken:machineToken});
     if(result.actionRequired){
-      console.log('Steam Guard action required:',result.validActions.map(x=>x.type).join(','));
-      const code=process.env.STEAM_GUARD_CODE||process.env.STEAM_2FA_CODE;
-      if(code){
-        await session.submitSteamGuardCode(code);
-        console.log('Steam Guard code submitted');
+      const types=result.validActions.map(x=>x.type);
+      console.log('Steam Guard action required:',types.join(','));
+      if(types.includes(2)||types.includes(3)){
+        await waitForGuardCode(session);
       }else{
-        console.log('Approve the Steam login in the mobile app, or set the requested one-time Guard code in Railway');
+        console.log('Approve the Steam login using the requested Steam confirmation method');
       }
     }
   }catch(e){console.error('Modern Steam authentication start failed',e.message,e.eresult||'')}

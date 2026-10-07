@@ -4,6 +4,9 @@
 require('dotenv').config();
 const Steam=require('steam');
 const dota2=require('dota2');
+const fs=require('fs');
+const path=require('path');
+const crypto=require('crypto');
 
 const steamClient=new Steam.SteamClient();
 const steamUser=new Steam.SteamUser(steamClient);
@@ -12,6 +15,14 @@ const Dota2=new dota2.Dota2Client(steamClient,true,false);
 const api=(process.env.BOT_API_URL||`http://127.0.0.1:${process.env.PORT||3000}`).replace(/\/$/,'');
 const token=process.env.ADMIN_TOKEN;
 const workerId=process.env.BOT_WORKER_ID||'riftline-1';
+const dataDir=process.env.BOT_DATA_DIR||path.join(__dirname,'../data');
+const sentryPath=path.join(dataDir,'steam-sentry.bin');
+const serversPath=path.join(dataDir,'steam-servers.json');
+fs.mkdirSync(dataDir,{recursive:true});
+try{
+  const saved=JSON.parse(fs.readFileSync(serversPath,'utf8'));
+  if(Array.isArray(saved)&&saved.length) Steam.servers=saved;
+}catch{}
 
 let creating=false;
 let activeMatchId=null;
@@ -47,12 +58,33 @@ function scheduleReconnect(){
 function logon(){
   const account=process.env.STEAM_USERNAME,password=process.env.STEAM_PASSWORD;
   if(!account||!password){console.error('STEAM_USERNAME / STEAM_PASSWORD missing');return}
-  steamUser.logOn({account_name:account,password,auth_code:process.env.STEAM_GUARD_CODE||undefined});
+  const details={account_name:account,password};
+  if(process.env.STEAM_GUARD_CODE) details.auth_code=process.env.STEAM_GUARD_CODE;
+  if(process.env.STEAM_2FA_CODE) details.two_factor_code=process.env.STEAM_2FA_CODE;
+  try{
+    const sentry=fs.readFileSync(sentryPath);
+    if(sentry.length) details.sha_sentryfile=sentry;
+  }catch{}
+  steamUser.logOn(details);
 }
 
 steamClient.on('connected',logon);
 steamClient.on('error',e=>{console.error('Steam connection error',e?.message||e);scheduleReconnect()});
 steamClient.on('loggedOff',r=>{console.error('Steam logged off',r);scheduleReconnect()});
+steamClient.on('servers',servers=>{
+  try{fs.writeFileSync(serversPath,JSON.stringify(servers))}catch(e){console.error('Server list save failed',e.message)}
+});
+steamUser.on('updateMachineAuth',(sentry,callback)=>{
+  try{
+    const hash=crypto.createHash('sha1').update(sentry.bytes).digest();
+    fs.writeFileSync(sentryPath,hash);
+    callback({sha_file:hash});
+    console.log('Steam machine authorization saved');
+  }catch(e){
+    console.error('Steam machine authorization save failed',e.message);
+    callback({});
+  }
+});
 steamClient.on('logOnResponse',r=>{
   if(r.eresult===Steam.EResult.OK){console.log('Steam logged in; launching Dota GC');Dota2.launch()}
   else {console.error('Steam login failed',r.eresult);scheduleReconnect()}
